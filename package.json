@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-bangbangcai",
   "description": "邦多利卡面猜猜看",
-  "version": "0.0.1",
+  "version": "1.0.3",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -9,14 +9,20 @@
     "dist"
   ],
   "license": "MIT",
-  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xsjh/koishi-plugin-bangbangcai"
+  },
   "keywords": [
     "chatbot",
     "koishi",
-    "plugin"
+    "plugin",
+    "bangdream"
   ],
-  "devDependencies": {},
   "peerDependencies": {
     "koishi": "^4.18.3"
+  },
+  "dependencies": {
+    "jimp": "^1.6.0"
   }
 }
