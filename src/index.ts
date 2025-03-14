@@ -41,7 +41,7 @@ export const usage = `
 
 <div class="version">
 <h3>Version</h3>
-<p>1.1.0</p>
+<p>1.2.0</p>
 <ul>
 <li>新增【重切片】指令，优化切片效果。</li>
 <li>新增【数据表清除】指令，可清除数据表。</li>
