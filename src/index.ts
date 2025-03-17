@@ -335,44 +335,57 @@ export async function apply(ctx: Context, config) {
       try {
         if (channelId) {
           const sanitizedChannelId = isDirect ? sanitizeChannelId(channelId) : channelId; // 私聊频道ID处理;
-          // 移除监听器和计时器 **先于** 数据库操作
-          if (timers[channelId]) {
-            if (timers[channelId].unregisterListener) {
+          // 先获取当前游戏状态
+          const gameRecord = await ctx.database.get("bangguess_user", {
+            channelId: sanitizedChannelId,
+            gaming: true
+          });
+
+          // 只有存在有效游戏记录时才执行清理
+          if (gameRecord.length > 0) {
+            // 移除监听器（如果存在）
+            if (timers[channelId]?.unregisterListener) {
               timers[channelId].unregisterListener();
               logInfo(`[clearGameSession] 已移除群聊 ${channelId} 的监听器`);
             }
-            clearTimeout(timers[channelId].timer);
-            delete timers[channelId];
-            logInfo(`[clearGameSession] 已清除群聊 ${channelId} 的计时器`);
-          }
 
-
-          const gameRecord = await ctx.database.get("bangguess_user", { channelId: sanitizedChannelId, gaming: true }); // 使用 sanitizedChannelId 查询;
-          if (config.autocleantemp && gameRecord.length > 0) { // 检查配置项和游戏记录是否存在;
-            const currentUserId = userId || gameRecord[0].userId; // 优先使用传入的 userId，否则从数据库记录中获取;
-            const card_path = config.card_path || path.join(ctx.baseDir, 'data', 'bangbangcai');
-            const userFolder = path.join(card_path, "images", `${currentUserId}_${sanitizedChannelId}`); // 使用 sanitizedChannelId;
-
-            try {
-              if (fs.existsSync(userFolder)) {
-                logInfo(`[clearGameSession] 准备删除用户 ${currentUserId} 在群聊 ${channelId} 的临时图片文件夹: ${userFolder}`);
-                await fs.promises.rm(userFolder, { recursive: true, force: true }); // force: true to avoid errors if files are read-only;
-                logInfo(`[clearGameSession] 已删除用户 ${currentUserId} 在群聊 ${channelId} 的临时图片文件夹: ${userFolder}`);
-              } else {
-                logInfo(`[clearGameSession] 未找到用户 ${currentUserId} 在群聊 ${channelId} 的临时图片文件夹，无需删除`);
+            // 移除监听器和计时器 **先于** 数据库操作
+            if (timers[channelId]) {
+              if (timers[channelId].unregisterListener) {
+                timers[channelId].unregisterListener();
+                logInfo(`[clearGameSession] 已移除群聊 ${channelId} 的监听器`);
               }
-            } catch (folderDeletionError) {
-              ctx.logger.error(`[clearGameSession] 删除用户 ${currentUserId} 在群聊 ${channelId} 的临时图片文件夹时出错:`, folderDeletionError);
+              clearTimeout(timers[channelId].timer);
+              delete timers[channelId];
+              logInfo(`[clearGameSession] 已清除群聊 ${channelId} 的计时器`);
             }
 
-            await ctx.database.remove("bangguess_user", { channelId: sanitizedChannelId, gaming: true }); // 删除 gaming 为 true 的记录; // 使用 sanitizedChannelId 删除;
-            logInfo(`[clearGameSession] 已删除群聊 ${channelId} 的游戏数据 (autocleantemp enabled)`);
+            const gameRecord = await ctx.database.get("bangguess_user", { channelId: sanitizedChannelId, gaming: true }); // 使用 sanitizedChannelId 查询;
+            if (config.autocleantemp && gameRecord.length > 0) { // 检查配置项和游戏记录是否存在;
+              const currentUserId = userId || gameRecord[0].userId; // 优先使用传入的 userId，否则从数据库记录中获取;
+              const card_path = config.card_path || path.join(ctx.baseDir, 'data', 'bangbangcai');
+              const userFolder = path.join(card_path, "images", `${currentUserId}_${sanitizedChannelId}`); // 使用 sanitizedChannelId;
 
-          } else {
-            await ctx.database.set("bangguess_user", { channelId: sanitizedChannelId, gaming: true }, { gaming: false }); // 更新 gaming 状态为 false; // 使用 sanitizedChannelId 更新;
-            logInfo(`[clearGameSession] 已结束群聊 ${channelId} 的游戏 (autocleantemp disabled, data kept)`);
+              try {
+                if (fs.existsSync(userFolder)) {
+                  logInfo(`[clearGameSession] 准备删除用户 ${currentUserId} 在群聊 ${channelId} 的临时图片文件夹: ${userFolder}`);
+                  await fs.promises.rm(userFolder, { recursive: true, force: true }); // force: true to avoid errors if files are read-only;
+                  logInfo(`[clearGameSession] 已删除用户 ${currentUserId} 在群聊 ${channelId} 的临时图片文件夹: ${userFolder}`);
+                } else {
+                  logInfo(`[clearGameSession] 未找到用户 ${currentUserId} 在群聊 ${channelId} 的临时图片文件夹，无需删除`);
+                }
+              } catch (folderDeletionError) {
+                ctx.logger.error(`[clearGameSession] 删除用户 ${currentUserId} 在群聊 ${channelId} 的临时图片文件夹时出错:`, folderDeletionError);
+              }
+
+              await ctx.database.remove("bangguess_user", { channelId: sanitizedChannelId, gaming: true }); // 删除 gaming 为 true 的记录; // 使用 sanitizedChannelId 删除;
+              logInfo(`[clearGameSession] 已删除群聊 ${channelId} 的游戏数据 (autocleantemp enabled)`);
+
+            } else {
+              await ctx.database.set("bangguess_user", { channelId: sanitizedChannelId, gaming: true }, { gaming: false }); // 更新 gaming 状态为 false; // 使用 sanitizedChannelId 更新;
+              logInfo(`[clearGameSession] 已结束群聊 ${channelId} 的游戏 (autocleantemp disabled, data kept)`);
+            }
           }
-
 
         }
       } catch (error) {
@@ -579,19 +592,29 @@ export async function apply(ctx: Context, config) {
       }
     }, config.middleware);
 
-    // 提取超时处理函数
     async function handleTimeout(ctx: Context, config: any, session: any, sanitizedChannelId: string, timers: any) {
       const channelId = session.channelId;
       const userId = session.userId;
+
+      // 检查当前计时器是否仍然有效
+      const currentTimer = timers[channelId];
+      if (!currentTimer?.timer) {
+        logInfo("[倒计时] 计时器已被清除，跳过处理");
+        return;
+      }
+
       try {
         const records = await ctx.database.get('bangguess_user', {
-          channelId: sanitizedChannelId, gaming: true
+          channelId: sanitizedChannelId,
+          gaming: true
         });
 
+        // 确保游戏状态仍然有效
         if (records.length === 0 || records[0].gaming !== true) {
-          logInfo("[倒计时] 倒计时结束时游戏可能已结束或记录不存在");
+          logInfo("[倒计时] 游戏已提前结束，跳过超时处理");
           return;
         }
+
         if (!records[0].card) {
           ctx.logger.error("[倒计时] 倒计时结束方法未找到二进制数据");
           await session.send(session.text(`commands.${config.bbc_command}.messages.dataerror`, [config.bbc_restart_command]));
@@ -599,24 +622,25 @@ export async function apply(ctx: Context, config) {
         }
 
         const record = records[0];
-        const imageData = record.card;
-        const to_url = record.img_url;
-        const nicknames = record.nicknames;
         const message = [
-          `${config.phrase_timeout}${nicknames[7]}`,
-          to_url,
-          h.image(imageData, 'image/png'),
+          `${config.phrase_timeout}${record.nicknames[7]}`,
+          record.img_url,
+          h.image(record.card, 'image/png'),
         ].join('\n');
+
         await session.send(message);
         logInfo('[超时] 超时游戏结束消息发给了', channelId, userId);
       } catch (error) {
         ctx.logger.error('[超时] 发送消息或图片时出错:', error);
       } finally {
-        logInfo('[超时] 游戏结束，清理会话');
-        await clearGameSession(channelId, userId, session.isDirect);
-        if (timers[channelId]?.timer) {
-          clearTimeout(timers[channelId].timer);
-          delete timers[channelId].timer;
+        // 确保只清理当前游戏的计时器
+        if (timers[channelId]?.timer === currentTimer.timer) {
+          logInfo('[超时] 清理当前游戏会话');
+          await clearGameSession(channelId, userId, session.isDirect);
+          clearTimeout(timers[channelId]?.timer);
+          delete timers[channelId];
+        } else {
+          logInfo('[超时] 检测到新游戏已开始，跳过清理');
         }
       }
     }
@@ -658,6 +682,7 @@ export async function apply(ctx: Context, config) {
         delete timers[channelId].timer;
       }
     }
+
 
 
     // 延迟等待方法
