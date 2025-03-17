@@ -9,7 +9,7 @@ export const reusable = true; // 声明此插件可重用
 export const name = "bangbangcai";
 
 export const inject = {
-  required: ["database", "i18n"],
+  required: ["database", "i18n", "http", "logger"],
   // optional: [""],
 };
 
@@ -41,7 +41,7 @@ export const usage = `
 
 <div class="version">
 <h3>Version</h3>
-<p>1.2.0</p>
+<p>1.3.0</p>
 <ul>
 <li>新增【重切片】指令，优化切片效果。</li>
 <li>新增【数据表清除】指令，可清除数据表。</li>
@@ -312,6 +312,7 @@ export async function apply(ctx: Context, config) {
 
               } else {
                 ctx.logger.error(`裁剪后的图片不存在: ${croppedImagePath}`);
+                return "图片截取出错，请稍后再试"
               }
             }
             imageSegments.push(config.remind_Message);
@@ -380,82 +381,86 @@ export async function apply(ctx: Context, config) {
     }
 
 
-    // 定义 "开始游戏" 命令,启动监听
+    // 定义 "开始游戏" 命令
     ctx.command(`${config.bbc}/${config.bbc_command}`)
       .action(async ({ session }) => {
-        try {
-          const channelId = session.channelId;
-          const sanitizedChannelId = session.isDirect ? sanitizeChannelId(channelId) : channelId; // 私聊频道ID处理;
-          const userId = session.userId;
+        const channelId = session.channelId;
+        const sanitizedChannelId = session.isDirect ? sanitizeChannelId(channelId) : channelId;
+        const userId = session.userId;
 
-          // 判断是否重复进行，若无往数据库增加当前用户的数据
+        try {
+          // 判断是否重复进行
           try {
             const existingGame = await ctx.database.get("bangguess_user", {
-              channelId: sanitizedChannelId, gaming: true // 查找 gaming 为 true 的记录; // 使用 sanitizedChannelId 查询;
+              channelId: sanitizedChannelId, gaming: true
             });
             if (existingGame.length > 0) {
-              await session.send(session.text(".aleadygaming", [config.bbc_bzd_command, config.bbc_restart_command])); // 修改提示语，带上 bzd 指令;
+              await session.send(session.text(".aleadygaming", [config.bbc_bzd_command, config.bbc_restart_command]));
               return;
             } else {
+              // 创建新的游戏记录
               const data = {
                 platform: session.platform,
                 userId: session.userId,
-                channelId: sanitizedChannelId, // 使用 sanitizedChannelId 存储;
+                channelId: sanitizedChannelId,
                 time: new Date(),
-                gaming: true, // 设置 gaming 为 true;
-                recrop_count: config.max_recrop_times, // 初始化重切片次数;
+                gaming: true,
+                recrop_count: config.max_recrop_times,
               };
               await ctx.database.create("bangguess_user", data);
             }
           } catch (error) {
             ctx.logger.error("插入数据时出错：", error);
             await session.send(session.text(".errorstart"));
+            return; // 确保在出错时返回，避免后续代码执行
           }
 
-
           // 读取 JSON 文件，获取随机角色信息
-          const jsonFilePath = path.join(__dirname, "./../resource/all.5.json"); // JSON 文件路径;
+          const jsonFilePath = path.join(__dirname, "./../resource/all5_2.json");
           logInfo("读取的json文件位置：", jsonFilePath);
-          const jsonData = await readJson(jsonFilePath);  // 调用 readJson 方法来获取随机角色的 resourceSetName, characterId;
+          const jsonData = await readJson(jsonFilePath);
           if (!jsonData) {
             await session.send(session.text(".jsonreaderror"));
             return;
           }
           const { resourceSetName, characterId } = jsonData;
-          const nicknameFilePath = path.join(__dirname, "./../resource/nickname.json");    // 读取nickname.json;
+          const nicknameFilePath = path.join(__dirname, "./../resource/nickname.json");
           let nicknames = await readJson_nickname(nicknameFilePath, characterId);
           logInfo(`角色ID: ${characterId} 的所有昵称:`, nicknames);
 
-          // 2. 构造图片 URL
+          // 构造图片 URL
           const imageUrl = `https://bestdori.com/assets/jp/characters/resourceset/${resourceSetName}_rip/card_normal.png`;
           logInfo(`选中的角色ID: ${characterId}`);
           logInfo(`图片链接: ${imageUrl}`);
+
+          // 更新数据库中的图片 URL 和 昵称
           try {
-            await ctx.database.set("bangguess_user",
-              { channelId: sanitizedChannelId, gaming: true }, // 查找 gaming 为 true 的记录; // 使用 sanitizedChannelId 更新;
-              { img_url: imageUrl, nicknames: nicknames } // 保存 nicknames;
+            await ctx.database.set(
+              "bangguess_user",
+              { channelId: sanitizedChannelId, gaming: true },
+              { img_url: imageUrl, nicknames: nicknames }
             );
             logInfo("图片 URL 和 昵称 已成功更新到数据库");
           } catch (error) {
             ctx.logger.error("更新图片 URL 和 昵称 到数据库时出错:", error);
             await session.send(session.text(".failedtocachedata"));
             return;
-          } // 更新数据库中的 img_url 字段;
+          }
 
-          // 3. 下载图片
+          // 下载图片
           await session.send(session.text(".nowloading"));
-          const Buffer = await downloadImage(imageUrl);
-          if (!Buffer) {
+          const imageBuffer = await downloadImage(imageUrl); // 修改变量名以区分Buffer类型
+          if (!imageBuffer) {
             await session.send(session.text(".downloaderror"));
             return;
           }
 
-          // 4. 将二进制编码 存储到数据库的 card 字段
+          // 将二进制编码 存储到数据库的 card 字段
           try {
             await ctx.database.set(
               "bangguess_user",
-              { channelId: sanitizedChannelId, gaming: true }, // 查找 gaming 为 true 的记录; // 使用 sanitizedChannelId 更新;
-              { card: Buffer }
+              { channelId: sanitizedChannelId, gaming: true },
+              { card: imageBuffer } // 使用 imageBuffer
             );
             logInfo("图片 二进制数据 已成功更新到数据库");
           } catch (error) {
@@ -464,28 +469,28 @@ export async function apply(ctx: Context, config) {
             return;
           }
 
-          // 5.调用 randomCropImage 进行裁剪
-          const imageSegments = []; // 初始化图片消息段数组;
+          // 调用 randomCropImage 进行裁剪并发送图片
+          const imageSegments = [];
           try {
             const card_path = config.card_path || path.join(ctx.baseDir, 'data', 'bangbangcai');
-            const folderPath = path.join(card_path, "images"); // 图片保存路径;
-            const cutWidth = config.cutWidth; // 裁剪宽度;
-            const cutLength = config.cutLength; // 裁剪高度;
+            const folderPath = path.join(card_path, "images");
+            const cutWidth = config.cutWidth;
+            const cutLength = config.cutLength;
 
             await randomCropImage(
               userId,
-              sanitizedChannelId, // 使用处理后的 channelId;
+              sanitizedChannelId,
               cutWidth,
               cutLength,
               folderPath
             );
-            imageSegments.push(config.textMessage); // 发送图片之前加一行文字并添加到数组;
+            imageSegments.push(config.textMessage);
             for (let i = 1; i <= 3; i++) {
               const croppedImagePath = path.join(
                 folderPath,
-                `${userId}_${sanitizedChannelId}`, // 使用处理后的 channelId;
+                `${userId}_${sanitizedChannelId}`,
                 `cropped_image_${i}.png`
-              );// 遍历裁切好的三张图片，将每个图片添加到消息段数组;
+              );
               if (fs.existsSync(croppedImagePath)) {
                 imageSegments.push(h.image(URL.pathToFileURL(croppedImagePath).href));
               } else {
@@ -493,11 +498,12 @@ export async function apply(ctx: Context, config) {
               }
             }
             imageSegments.push(config.remind_Message);
-            await delay(1000); //等1秒;
+            await delay(1000);
           } catch (error) {
             ctx.logger.error("裁剪失败:", error);
             return "裁剪失败，请检查日志。";
           }
+
           try {
             await session.send(imageSegments);
             logInfo("裁剪图片发往：", userId, channelId);
@@ -505,155 +511,16 @@ export async function apply(ctx: Context, config) {
             ctx.logger.error("发送图片消息时出错:", error);
           }
 
-          // 如果没有捕获错误，继续执行后续逻辑
-          logInfo("游戏继续进行...");
+          logInfo("游戏已启动，等待用户输入...");
 
-
-          // 6. 监听用户输入的消息[ctx.on()会返回 dispos 函数，调用即可取消监听]
-          // let countdownTimer;// 定义一个标志变量，用于判断倒计时是否已设置, 改为对象;
-          // let dispose: () => void; // 声明 dispose 函数, 不需要了;
-
-          const messageListener = async (session) => {
-            // 确保只处理当前 channel 的消息
-            if (session.channelId !== channelId) return;
-
-            logInfo(`[Message Listener] 频道 ${channelId} 正在进行游戏, 进入监听`);
-            let userInput = session.stripped.content.trim(); // 获取用户输入的消息内容并去除前后空格;
-            const userId = session.userId;
-            logInfo("游戏开始后 用户 ", userId, " 在 ", channelId, " 输入: ", userInput); // 打印用户输入的内容进行调试;
-
-            // 如果倒计时未设置，则设置倒计时，结束自动发送答案
-            if (!timers[channelId] && !config.nowtimers) { // 只有当 nowtimers 为 false 时才在这里设置计时器;
-              timers[channelId] = ctx.setTimeout(async () => {
-                try {
-                  const records = await ctx.database.get("bangguess_user", {
-                    channelId: sanitizedChannelId, gaming: true // 查找 gaming 为 true 的记录; // 使用 sanitizedChannelId 查询;
-                  });
-                  // 修改点： 检查游戏是否还在进行中
-                  if (records.length === 0 || records[0].gaming !== true) {
-                    logInfo("[倒计时] 倒计时结束时游戏可能已结束或记录不存在");
-                    return; // 游戏已经结束或记录不存在，直接返回，不发送错误提示
-                  }
-                  if (!records[0].card) {
-                    ctx.logger.error("[倒计时] 倒计时结束方法未找到二进制数据");
-                    await session.send(session.text(`commands.${config.bbc_command}.messages.dataerror`, [config.bbc_restart_command]));
-                    return;
-                  }
-
-
-                  const record = records[0];
-                  const imageData = record.card; // 获得图片二进制数据;
-                  const to_url = record.img_url; // 获得图片url;
-                  const nicknames = record.nicknames;
-                  const message = [
-                    `${config.phrase_timeout}${nicknames[7]}`,
-                    to_url,
-                    h.image(imageData, "image/png"), // 使用 h.image() 发送图片;
-                  ].join("\n");
-                  await session.send(message);
-                  logInfo("[倒计时] 超时游戏结束消息发给了", channelId, userId);
-                } catch (error) {
-                  ctx.logger.error("[倒计时] 发送消息或图片时出错:", error);
-                } finally {
-                  logInfo("[倒计时] 超时, 弃置监听器");
-                  await clearGameSession(channelId, userId, session.isDirect); // 结束游戏 session, 传入 userId 和 isDirect;
-                  // dispose(); // 不需要了;
-                }
-              }, config.bbctimeout * 1000);
-            }
-
-
-            if (nicknames.some((nickname) => userInput === (nickname))) {
-              // @用户并发送答案
-              if (timers[channelId]?.timer) {
-                clearTimeout(timers[channelId].timer); // 取消倒计时;
-                delete timers[channelId].timer; // 从 timers 对象中移除;
-              }
-              const userId = session.userId;
-              try {
-                const records = await ctx.database.get('bangguess_user', {
-                  channelId: sanitizedChannelId, gaming: true // 查找 gaming 为 true 的记录; // 使用 sanitizedChannelId 查询;
-                });
-                if (records.length === 0 || !records[0].img_url) {
-                  ctx.logger.error('[回答正确] 未找到用户记录或 img_url 数据');
-                  await session.send(session.text(`commands.${config.bbc_command}.messages.imagedataerror`, [config.bbc_restart_command]));
-                  return;
-                }
-                const record = records[0];
-                const img_url = record.img_url; // 获取第一条记录的 img_url;
-                const imageData = record.card; // 获取第一条记录的二进制数据;
-                const nicknames = record.nicknames;
-                const message_y = [`正确，${nicknames[7]} : `, img_url];
-                await session.send(message_y);
-                try {
-                  const message = [
-                    `${h.at(session.userId)} ${config.phrase_answered}${userInput}`,
-                    h.image(imageData, 'image/png'),
-                    '游戏结束', // 使用 h.image() 发送图片;
-                  ].join('\n');
-                  await session.send(message);
-                } catch {
-                  await session.send(session.text(`commands.${config.bbc_command}.messages.imgfailedtosend`));
-                }
-                logInfo('[回答正确] 回答正确消息发送至：', userId, userInput);
-              } catch (error) {
-                ctx.logger.error('[回答正确] 发送消息时出错:', error);
-              } finally {
-                await clearGameSession(channelId, userId, session.isDirect); // 结束游戏 session, 传入 userId 和 isDirect;
-              }
-            }
-          };
-
-          // 将监听器添加到 timers 对象中并获取取消监听函数
-          const unregister = ctx.on('message', messageListener);
-          if (timers[channelId]) {
-            timers[channelId].unregisterListener = unregister;
-          } else {
-            timers[channelId] = { unregisterListener: unregister };
-          }
-
-          logInfo(`开始监听群聊 ${channelId} 的消息...`);
-
-          // 立即开始计时器 (如果配置项 nowtimers 为 true)
-          if (config.nowtimers) {
-            timers[channelId] = timers[channelId] || {}; // 确保 timers[channelId] 是对象;
+          // 启动计时器 (只有当 config.nowtimers 为 false 时才启动，否则在 middleware 中启动)
+          if (!config.nowtimers) {
+            timers[channelId] = timers[channelId] || {};
             timers[channelId].timer = ctx.setTimeout(async () => {
-              try {
-                const records = await ctx.database.get('bangguess_user', {
-                  channelId: sanitizedChannelId, gaming: true // 查找 gaming 为 true 的记录; // 使用 sanitizedChannelId 查询;
-                });
-
-                // 修改点： 检查游戏是否还在进行中
-                if (records.length === 0 || records[0].gaming !== true) {
-                  logInfo("[倒计时] 倒计时结束时游戏可能已结束或记录不存在");
-                  return; // 游戏已经结束或记录不存在，直接返回，不发送错误提示
-                }
-                if (!records[0].card) {
-                  ctx.logger.error("倒计时结束方法未找到二进制数据");
-                  await session.send(session.text(`commands.${config.bbc_command}.messages.dataerror`, [config.bbc_restart_command]));
-                  return;
-                }
-
-
-                const record = records[0];
-                const imageData = record.card; // 获得图片二进制数据;
-                const to_url = record.img_url; // 获得图片url;
-                const nicknames = record.nicknames;
-                const message = [
-                  `${config.phrase_timeout}${nicknames[7]}`,
-                  to_url,
-                  h.image(imageData, 'image/png'), // 使用 h.image() 发送图片;
-                ].join('\n');
-                await session.send(message);
-                logInfo('超时游戏结束消息发给了', channelId, userId);
-              } catch (error) {
-                ctx.logger.error('发送消息或图片时出错:', error);
-              } finally {
-                logInfo('超时, 弃置监听器');
-                await clearGameSession(channelId, userId, session.isDirect); // 结束游戏 session, 传入 userId 和 isDirect;
-              }
+              await handleTimeout(ctx, config, session, sanitizedChannelId, timers); // 提取超时处理函数
             }, config.bbctimeout * 1000);
           }
+
 
         } catch (error) {
           ctx.logger.error("游戏执行过程中出错:", error);
@@ -661,7 +528,136 @@ export async function apply(ctx: Context, config) {
         }
       });
 
+    ctx.middleware(async (session, next) => {
+      const channelId = session.channelId;
+      const sanitizedChannelId = session.isDirect ? sanitizeChannelId(channelId) : channelId;
+      const userId = session.userId;
+      const userInput = session.stripped.content.trim();
 
+      try {
+        const gameRecord = await ctx.database.get("bangguess_user", { channelId: sanitizedChannelId, gaming: true });
+        if (gameRecord.length > 0 && gameRecord[0].gaming === true) {
+          // 游戏正在进行中
+          const record = gameRecord[0];
+          const nicknames = record.nicknames;
+
+          /*if (userInput === config.bbc_bzd_command) {
+            // 用户输入了 "不知道答案" 指令
+            logInfo(`用户 ${userId} 在频道 ${channelId} 输入了 ${config.bbc_bzd_command}`);
+            await handleBzdCommand(ctx, config, session, sanitizedChannelId, record, timers); // 提取不知道答案处理函数
+            return; // 阻止消息传递到下一个中间件
+          }*/
+
+          if (nicknames.some((nickname) => userInput.includes(nickname))) {
+            // 用户回答正确
+            logInfo(`用户 ${userId} 在频道 ${channelId} 回答正确: ${userInput}`);
+            await handleCorrectAnswer(ctx, config, session, sanitizedChannelId, record, userInput, timers); // 提取正确答案处理函数
+            return; // 阻止消息传递到下一个中间件
+          }
+
+          // 检查是否是游戏开始后第一次用户输入，并且 config.nowtimers 为 true
+          if (config.nowtimers && !timers[channelId]?.timer) { // 确保计时器只启动一次
+            timers[channelId] = timers[channelId] || {};
+            timers[channelId].timer = ctx.setTimeout(async () => {
+              await handleTimeout(ctx, config, session, sanitizedChannelId, timers); // 提取超时处理函数
+            }, config.bbctimeout * 1000);
+            logInfo(`[nowtimers] 启动群聊 ${channelId} 的计时器，等待超时`);
+          }
+
+
+          logInfo(`用户 ${userId} 在频道 ${channelId} 输入了错误答案或无关消息: ${userInput}`);
+          // 用户输入了错误答案或者无关消息，但游戏继续进行，不阻止消息传递
+          return next();
+
+        } else {
+          // 当前频道没有游戏进行，直接传递给下一个中间件
+          return next();
+        }
+      } catch (error) {
+        ctx.logger.error("中间件处理消息时出错:", error);
+        return next(); // 发生错误也传递给下一个中间件，避免阻塞
+      }
+    }, config.middleware);
+
+    // 提取超时处理函数
+    async function handleTimeout(ctx: Context, config: any, session: any, sanitizedChannelId: string, timers: any) {
+      const channelId = session.channelId;
+      const userId = session.userId;
+      try {
+        const records = await ctx.database.get('bangguess_user', {
+          channelId: sanitizedChannelId, gaming: true
+        });
+
+        if (records.length === 0 || records[0].gaming !== true) {
+          logInfo("[倒计时] 倒计时结束时游戏可能已结束或记录不存在");
+          return;
+        }
+        if (!records[0].card) {
+          ctx.logger.error("[倒计时] 倒计时结束方法未找到二进制数据");
+          await session.send(session.text(`commands.${config.bbc_command}.messages.dataerror`, [config.bbc_restart_command]));
+          return;
+        }
+
+        const record = records[0];
+        const imageData = record.card;
+        const to_url = record.img_url;
+        const nicknames = record.nicknames;
+        const message = [
+          `${config.phrase_timeout}${nicknames[7]}`,
+          to_url,
+          h.image(imageData, 'image/png'),
+        ].join('\n');
+        await session.send(message);
+        logInfo('[超时] 超时游戏结束消息发给了', channelId, userId);
+      } catch (error) {
+        ctx.logger.error('[超时] 发送消息或图片时出错:', error);
+      } finally {
+        logInfo('[超时] 游戏结束，清理会话');
+        await clearGameSession(channelId, userId, session.isDirect);
+        if (timers[channelId]?.timer) {
+          clearTimeout(timers[channelId].timer);
+          delete timers[channelId].timer;
+        }
+      }
+    }
+
+    // 提取 "回答正确" 处理函数
+    async function handleCorrectAnswer(ctx: Context, config: any, session: any, sanitizedChannelId: string, record: Bangguess_user, userInput: string, timers: any) {
+      const channelId = session.channelId;
+      const userId = session.userId;
+      const img_url = record.img_url;
+      const imageData = record.card;
+      const nicknames = record.nicknames;
+
+      // 立即结束游戏会话，防止多次触发
+      await clearGameSession(channelId, userId, session.isDirect);
+
+      // 再次检查游戏是否还在进行中，以防 clearGameSession 出现问题或其他竞态条件
+      const currentGameRecord = await ctx.database.get("bangguess_user", { channelId: sanitizedChannelId, gaming: true });
+      if (currentGameRecord.length > 0 && currentGameRecord[0].gaming) {
+        logInfo('[回答正确] 游戏会话清理后，仍然检测到 gaming 为 true，可能存在竞态条件或错误');
+        // 即使出现异常，也应该继续发送回答正确的消息，但需要记录日志进行排查
+      }
+
+      const message_y = [`正确，${nicknames[7]} : `, img_url];
+      await session.send(message_y);
+      try {
+        const message = [
+          `${h.at(session.userId)} ${config.phrase_answered}${userInput}`,
+          h.image(imageData, 'image/png'),
+          '游戏结束',
+        ].join('\n');
+        await session.send(message);
+      } catch {
+        await session.send(session.text(`commands.${config.bbc_command}.messages.imgfailedtosend`));
+      }
+      logInfo('[回答正确] 回答正确消息发送至：', userId, userInput);
+
+      if (timers[channelId]?.timer) {
+        clearTimeout(timers[channelId].timer);
+        delete timers[channelId].timer;
+      }
+    }
 
 
     // 延迟等待方法
@@ -678,6 +674,7 @@ export async function apply(ctx: Context, config) {
       let attempt = 0; // 下载尝试次数;;
       while (attempt <= maxRetries) {
         try {
+          /*
           // 使用ctx.http获取图片的二进制数据，返回ArrayBuffer
           const responseData = await ctx.http.get<ArrayBuffer>(imageUrl, {
             responseType: "arraybuffer",
@@ -687,10 +684,16 @@ export async function apply(ctx: Context, config) {
               Referer: "https://bestdori.com/",
             },
           });
+          logInfo(`图片: ${imageUrl}`);
           logInfo(`图片请求成功，大小: ${responseData.byteLength} 字节`);
           logInfo(`图片二进制数据的前10个字节:`, new Uint8Array(responseData, 0, 10)
           ); // 输出前10个字节进日志查看;
-          const buffer = Buffer.from(responseData); // 将 ArrayBuffer 转换为 Buffer
+          */
+          const responseData = await ctx.http.file(imageUrl)
+          logInfo(`图片: ${imageUrl}`);
+          logInfo(responseData);
+          const buffer = Buffer.from(responseData.data); // 将 ArrayBuffer 转换为 Buffer
+
           return buffer;
         } catch (error) {
           ctx.logger.error(`第 ${attempt + 1} 次下载图片失败:`, error);
@@ -820,4 +823,3 @@ export async function apply(ctx: Context, config) {
 
   });
 }
-
