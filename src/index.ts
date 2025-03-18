@@ -31,6 +31,11 @@ export const usage = `
 
 <div class="version">
 <h3>Version</h3>
+<p>1.5.0</p>
+<ul>
+<li>题库中加入特训后卡面</li>
+<li>@的后面加了个空格</li>
+</ul>
 <p>1.4.0</p>
 <ul>
 <li>完全重构了代码</li>
@@ -56,6 +61,7 @@ export const Config =
   Schema.intersect([
     Schema.object({
       bbc_command: Schema.string().default("bbc").description("`游戏开始`的指令名称"),
+      bbc_recrop_command: Schema.string().default("bbc重切").description("`重新切片`的指令名称"),
     }).description('基础设置'),
     Schema.object({
       textMessage: Schema.string().description("`猜谜`提示语1").default("时间60秒~\n猜猜我是谁："),
@@ -92,10 +98,31 @@ export async function apply(ctx: Context, config) {
       await session.send("图片加载中请稍等...")
       const {resourceSetName, characterId} = randomCharacter()
       const nicknames = getNicknames(characterId)
-      const imageUrl = `https://bestdori.com/assets/jp/characters/resourceset/${resourceSetName}_rip/card_normal.png`
-      const image = Buffer.from(await ctx.http.get(imageUrl, {responseType: "arraybuffer"}))
+
+      let imageArrayBuffer: ArrayBuffer
+      let imageUrl: string
+      try {
+        if (Random.bool(0.5)) {
+          imageUrl = `https://bestdori.com/assets/jp/characters/resourceset/${resourceSetName}_rip/card_after_training.png`
+          if ((await ctx.http.get(imageUrl, {responseType: "text"})).includes("We're sorry but Bestdori!")) {
+            imageUrl = `https://bestdori.com/assets/jp/characters/resourceset/${resourceSetName}_rip/card_normal.png`
+            imageArrayBuffer = await ctx.http.get(imageUrl, {responseType: "arraybuffer"})
+          } else {
+            imageArrayBuffer = await ctx.http.get(imageUrl, {responseType: "arraybuffer"})
+          }
+        } else {
+          imageUrl = `https://bestdori.com/assets/jp/characters/resourceset/${resourceSetName}_rip/card_normal.png`
+          imageArrayBuffer = await ctx.http.get(imageUrl, {responseType: "arraybuffer"})
+        }
+      } catch {
+        games[session.channelId] = false
+        return "下载图片时遇到网络错误"
+      }
+
+      const image = Buffer.from(imageArrayBuffer)
       const cropedImages = await randomCropImage(image, config.cutWidth, config.cutLength)
-      const message = `${config.textMessage}
+      const message = `时间${config.bbctimeout}秒~
+猜猜我是谁：
 ${h.image(cropedImages[0], "image/jpeg")}
 ${h.image(cropedImages[1], "image/jpeg")}
 ${h.image(cropedImages[2], "image/jpeg")}
@@ -112,12 +139,12 @@ ${config.recrop ? `(输入 重切 可以重新随机裁剪图片，至多${confi
           disposeTimer()
           games[session.channelId] = false
           await session.send(`正确，${nicknames[7]}：${imageUrl}`)
-          await session.send(`${h.at(session.userId)}${config.phrase_answered}${session.content}\n${h.image(image, "image/jpeg")}`)
+          await session.send(`${h.at(session.userId)} ${config.phrase_answered}${session.content}\n${h.image(image, "image/jpeg")}`)
         } else if (session.content === "bzd") {
           dispose()
           disposeTimer()
-          delete games[session.channelId]
-          await session.send(`${h.at(session.userId)}${config.phrase_bzd}${nicknames[7]}\n${h.image(image, "image/jpeg")}`)
+          games[session.channelId] = false
+          await session.send(`${h.at(session.userId)} ${config.phrase_bzd}${nicknames[7]}\n${h.image(image, "image/jpeg")}`)
         } else if (session.content === "重切") {
           if (!config.recrop) {
 
