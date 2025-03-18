@@ -56,7 +56,6 @@ export const Config =
   Schema.intersect([
     Schema.object({
       bbc_command: Schema.string().default("bbc").description("`游戏开始`的指令名称"),
-      bbc_recrop_command: Schema.string().default("bbc重切").description("`重新切片`的指令名称"),
     }).description('基础设置'),
     Schema.object({
       textMessage: Schema.string().description("`猜谜`提示语1").default("时间60秒~\n猜猜我是谁："),
@@ -96,8 +95,7 @@ export async function apply(ctx: Context, config) {
       const imageUrl = `https://bestdori.com/assets/jp/characters/resourceset/${resourceSetName}_rip/card_normal.png`
       const image = Buffer.from(await ctx.http.get(imageUrl, {responseType: "arraybuffer"}))
       const cropedImages = await randomCropImage(image, config.cutWidth, config.cutLength)
-      const message = `时间${config.bbctimeout}秒~
-猜猜我是谁：
+      const message = `${config.textMessage}
 ${h.image(cropedImages[0], "image/jpeg")}
 ${h.image(cropedImages[1], "image/jpeg")}
 ${h.image(cropedImages[2], "image/jpeg")}
