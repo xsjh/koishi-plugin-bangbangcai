@@ -31,6 +31,11 @@ export const usage = `
 
 <div class="version">
 <h3>Version</h3>
+<p>1.5.0</p>
+<ul>
+<li>题库中加入特训后卡面</li>
+<li>@的后面加了个空格</li>
+</ul>
 <p>1.4.0</p>
 <ul>
 <li>完全重构了代码</li>
