@@ -71,7 +71,7 @@ export const Config =
     }).description('进阶设置'),
     Schema.object({
       bbctimeout: Schema.number().default(60).description("游戏持续(计时)的 时长（秒）"),
-      recrop: Schema.boolean().default(false).description("玩家是否可以重新裁剪图片"),
+      recrop: Schema.boolean().default(true).description("玩家是否可以重新裁剪图片"),
       max_recrop_times: Schema.number().default(3).min(0).max(15).step(1).description("允许`重新切片`的最大次数").role("slider"),
     }).description('交互设置'),
     Schema.object({
