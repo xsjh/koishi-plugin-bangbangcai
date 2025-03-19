@@ -31,6 +31,10 @@ export const usage = `
 
 <div class="version">
 <h3>Version</h3>
+<p>1.6.0</p>
+<ul>
+<li>现在答案对大小写不敏感了</li>
+</ul>
 <p>1.5.0</p>
 <ul>
 <li>题库中加入特训后卡面</li>
@@ -71,7 +75,7 @@ export const Config =
     }).description('进阶设置'),
     Schema.object({
       bbctimeout: Schema.number().default(60).description("游戏持续(计时)的 时长（秒）"),
-      recrop: Schema.boolean().default(true).description("玩家是否可以重新裁剪图片"),
+      recrop: Schema.boolean().default(false).description("玩家是否可以重新裁剪图片"),
       max_recrop_times: Schema.number().default(3).min(0).max(15).step(1).description("允许`重新切片`的最大次数").role("slider"),
     }).description('交互设置'),
     Schema.object({
@@ -134,12 +138,12 @@ ${config.recrop ? `(输入 重切 可以重新随机裁剪图片，至多${confi
       let cropTimes = 0
 
       const dispose = ctx.channel(session.channelId).middleware(async (session, next) => {
-        if (nicknames.includes(session.content)) {
+        if (nicknames.includes(session.content.toLowerCase())) {
           dispose()
           disposeTimer()
           games[session.channelId] = false
           await session.send(`正确，${nicknames[7]}：${imageUrl}`)
-          await session.send(`${h.at(session.userId)} ${config.phrase_answered}${session.content}\n${h.image(image, "image/jpeg")}`)
+          await session.send(`${h.at(session.userId)} ${config.phrase_answered}${session.content.toLowerCase()}\n${h.image(image, "image/jpeg")}`)
         } else if (session.content === "bzd") {
           dispose()
           disposeTimer()
@@ -147,7 +151,7 @@ ${config.recrop ? `(输入 重切 可以重新随机裁剪图片，至多${confi
           await session.send(`${h.at(session.userId)} ${config.phrase_bzd}${nicknames[7]}\n${h.image(image, "image/jpeg")}`)
         } else if (session.content === "重切") {
           if (!config.recrop) {
-
+            return next()
           } else if (cropTimes >= config.max_recrop_times) {
             await session.send(`已经重切了${config.max_recrop_times}次了哦~`)
           } else {
@@ -161,7 +165,7 @@ ${h.image(recropedImages[2], "image/jpeg")}`)
         } else {
           return next()
         }
-      })
+      }, true)
 
       const disposeTimer = ctx.setTimeout(async () => {
         if (games[session.channelId]) {
